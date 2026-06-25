@@ -9,3 +9,13 @@ export const registerUserService = async (data: any) => {
 
   return result.rows[0].register_user;
 };
+export const loginUserService = async (data: any) => {
+  const { email, password } = data;
+
+  const result = await client.query(
+    "SELECT * FROM login_user($1, $2)",
+    [email, password]
+  );
+
+  return result.rows[0];
+};
