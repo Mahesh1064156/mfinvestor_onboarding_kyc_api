@@ -1,7 +1,13 @@
-
 import { Request, Response } from "express";
 import { getKycByUserService, submitKycService } from "./kyc.service";
+import { uploadDocumentService } from "./kyc.service";
 
+export const validatePAN = async (req: Request, res: Response) => {
+  try {
+  } catch (error) {
+    console.error(error);
+  }
+};
 export const submitKyc = async (req: Request, res: Response) => {
   try {
     const kyc = await submitKycService(req.body);
@@ -26,6 +32,26 @@ export const submitKyc = async (req: Request, res: Response) => {
   }
 };
 
+export const uploadDocument = async (req: Request, res: Response) => {
+  try {
+    const result = await uploadDocumentService(req);
+    res.status(201).json({
+      message: "Document uploaded successfully",
+      data: result,
+    });
+  } catch (error) {
+    console.error(error);
+    if (error instanceof Error) {
+      res.status(400).json({
+        error: error.message,
+      });
+      return;
+    }
+    res.status(500).json({
+      error: "Failed to upload document",
+    });
+  }
+};
 export const getKycByUser = async (req: Request, res: Response) => {
   try {
     const userId = Number(req.params.userId);
@@ -56,4 +82,3 @@ export const getKycByUser = async (req: Request, res: Response) => {
     });
   }
 };
-

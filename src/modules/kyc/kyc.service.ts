@@ -1,5 +1,5 @@
-
 import client from "../../config/supabase";
+import { supabaseStorage } from "../../config/supabase";
 import { isValidPan, normalizePan } from "../../common/utils/panValidator";
 import {
   KYC_AUDIT_ACTION,
@@ -8,6 +8,9 @@ import {
   PAN_STATUS,
 } from "./kyc.constants";
 import { SubmitKycRequest } from "./kyc.model";
+import { Request } from "express";
+import fs from "fs";
+import path from "path";
 
 const validateInvestorUser = async (userId: number) => {
   const result = await client.query(
@@ -92,6 +95,74 @@ export const submitKycService = async (data: SubmitKycRequest) => {
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
+  }
+};
+
+export const uploadDocumentService = async (req: Request) => {
+  const { user_id, document_type, kyc_application_id } = req.body;
+  const file = req.file;
+  if (!user_id || !document_type || !file) {
+    throw new Error("Missing required fields");
+  }
+  const fileBuffer = fs.readFileSync(file.path);
+  const fileName = file.originalname;
+  const storagePath = `docs/${Date.now()}_${fileName}`;
+  await client.query("BEGIN");
+  try {
+    const { error: uploadError } = await supabaseStorage.storage
+      .from("docs")
+      .upload(storagePath, fileBuffer, {
+        contentType: file.mimetype,
+        upsert: false,
+      });
+    if (uploadError) {
+      throw new Error(uploadError.message);
+    }
+    const { data: publicUrlData } = supabaseStorage.storage
+      .from("docs")
+      .getPublicUrl(storagePath);
+    const fileUrl = publicUrlData.publicUrl;
+    await client.query(
+      `SELECT insert_user_document(
+        $1, $2, $3, $4, $5, $6, $7
+      )`,
+      [
+        user_id,
+        document_type,
+        fileUrl,
+        kyc_application_id,
+        fileName,
+        file.size,
+        true,
+      ],
+    );
+    await client.query("COMMIT");
+    return {
+      file_url: fileUrl,
+      file_name: fileName,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    if (file?.path && fs.existsSync(file.path)) {
+      fs.unlinkSync(file.path);
+    }
+  }
+};
+export const validatePan = async (data: SubmitKycRequest): Promise<boolean> => {
+  try {
+    const { pan_number } = data;
+    if (!pan_number) {
+      return false;
+    }
+    if (!isValidPan(pan_number)) {
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error("Error validating PAN:", error);
+    return false;
   }
 };
 
