@@ -48,7 +48,7 @@ export const submitKycService = async (data: SubmitKycRequest) => {
     await validateInvestorUser(user_id);
 
     const existingKyc = await client.query(
-      "SELECT id FROM kyc_details WHERE user_id = $1",
+      "SELECT id FROM kyc_applications WHERE user_id = $1",
       [user_id],
     );
 
@@ -56,7 +56,7 @@ export const submitKycService = async (data: SubmitKycRequest) => {
 
     if (existingKyc.rows.length > 0) {
       result = await client.query(
-        `UPDATE kyc_details
+        `UPDATE kyc_applications
          SET pan_number = $1,
              pan_status = $2,
              kyc_status = $3,
@@ -68,7 +68,7 @@ export const submitKycService = async (data: SubmitKycRequest) => {
       );
     } else {
       result = await client.query(
-        `INSERT INTO kyc_details (
+        `INSERT INTO kyc_applications (
            user_id,
            pan_number,
            pan_status,
