@@ -97,7 +97,7 @@ export const submitKycService = async (data: SubmitKycRequest) => {
 
 export const getKycByUserService = async (userId: number) => {
   const result = await client.query(
-    "SELECT * FROM kyc_details WHERE user_id = $1",
+    "SELECT * FROM kyc_applications WHERE user_id = $1",
     [userId],
   );
 
