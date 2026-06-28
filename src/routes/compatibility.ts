@@ -87,12 +87,6 @@ router.post('/kyc/submit', async (req, res) => {
       return res.status(404).json({ error: 'Investor profile not found' });
     }
 
-    await VerificationRequest.findOneAndUpdate(
-      { investorId: user_id },
-      { investorId: user_id, status: 'PENDING' },
-      { upsert: true, new: true }
-    );
-
     try {
       await createAuditLog({
         actorId: user_id,
