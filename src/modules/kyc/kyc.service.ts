@@ -1,176 +1,44 @@
-import client from "../../config/supabase";
-import { supabaseStorage } from "../../config/supabase";
-import { isValidPan, normalizePan } from "../../common/utils/panValidator";
-import {
-  KYC_AUDIT_ACTION,
-  KYC_AUDIT_ENTITY,
-  KYC_STATUS,
-  PAN_STATUS,
-} from "./kyc.constants";
-import { SubmitKycRequest } from "./kyc.model";
-import { Request } from "express";
-import fs from "fs";
-import path from "path";
+import { Types } from 'mongoose';
+import { ApiError } from '../../common/utils/apiError';
+import { InvestorProfile } from '../investor/investor.model';
+import { KycDocument } from './kyc.model';
+import { VerificationRequest } from '../verification/verification.model';
+import { uploadToSupabase } from '../../integrations/storage.service';
+import { createAuditLog } from '../admin/admin.service';
 
-const validateInvestorUser = async (userId: number) => {
-  const result = await client.query(
-    `SELECT u.user_id, r.role_type
-     FROM mf_users u
-     JOIN roles r ON r.id = u.role_id
-     WHERE u.user_id = $1`,
-    [userId],
-  );
-
-  const user = result.rows[0];
-
-  if (!user) {
-    throw new Error("User not found");
-  }
-
-  if (user.role_type?.toLowerCase() !== "investor") {
-    throw new Error("Only investor users can submit KYC");
-  }
+export const submitPan = async (userId: string, payload: any) => {
+  const profile = await InvestorProfile.findOneAndUpdate({ userId }, {
+    panNumber: payload.panNumber,
+    panName: payload.panName,
+    dateOfBirth: new Date(payload.dateOfBirth),
+    panValidated: true,
+    onboardingStatus: 'PAN_SUBMITTED',
+  }, { new: true });
+  if (!profile) throw new ApiError(404, 'Investor profile not found', 'NOT_FOUND');
+  await createAuditLog({ actorId: new Types.ObjectId(userId), actorRole: 'INVESTOR', action: 'PAN_SUBMITTED', entityType: 'INVESTOR_PROFILE', entityId: profile._id });
+  return profile;
 };
 
-export const submitKycService = async (data: SubmitKycRequest) => {
-  const { user_id, pan_number } = data;
+export const uploadDocument = async (userId: string, documentType: string, file?: Express.Multer.File) => {
+  if (!file) throw new ApiError(400, 'File is required', 'VALIDATION_ERROR');
+  const profile = await InvestorProfile.findOne({ userId });
+  if (!profile) throw new ApiError(404, 'Investor profile not found', 'NOT_FOUND');
+  if (!profile.panValidated) throw new ApiError(400, 'Submit PAN before uploading documents', 'PAN_REQUIRED');
 
-  if (!user_id || !pan_number) {
-    throw new Error("User ID and PAN number are required");
-  }
+  const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `${userId}/${documentType}-${Date.now()}-${safeName}`;
+  const storage = await uploadToSupabase(file, path);
+  const document = await KycDocument.create({ userId, documentType, fileName: file.originalname, fileUrl: storage.fileUrl, storagePath: storage.storagePath, mimeType: file.mimetype, fileSize: file.size });
 
-  if (!isValidPan(pan_number)) {
-    throw new Error("Invalid PAN number");
-  }
-
-  const normalizedPan = normalizePan(pan_number);
-
-  await client.query("BEGIN");
-
-  try {
-    await validateInvestorUser(user_id);
-
-    const existingKyc = await client.query(
-      "SELECT id FROM kyc_applications WHERE user_id = $1",
-      [user_id],
-    );
-
-    let result;
-
-    if (existingKyc.rows.length > 0) {
-      result = await client.query(
-        `UPDATE kyc_applications
-         SET pan_number = $1,
-             pan_status = $2,
-             kyc_status = $3,
-             submitted_at = NOW(),
-             verified_at = NULL
-         WHERE user_id = $4
-         RETURNING *`,
-        [normalizedPan, PAN_STATUS.PENDING, KYC_STATUS.SUBMITTED, user_id],
-      );
-    } else {
-      result = await client.query(
-        `INSERT INTO kyc_applications (
-           user_id,
-           pan_number,
-           pan_status,
-           kyc_status,
-           submitted_at
-         )
-         VALUES ($1, $2, $3, $4, NOW())
-         RETURNING *`,
-        [user_id, normalizedPan, PAN_STATUS.PENDING, KYC_STATUS.SUBMITTED],
-      );
-    }
-
-    await client.query(
-      "INSERT INTO audit_logs(user_id, action, entity) VALUES ($1, $2, $3)",
-      [user_id, KYC_AUDIT_ACTION.SUBMIT, KYC_AUDIT_ENTITY],
-    );
-
-    await client.query("COMMIT");
-
-    return result.rows[0];
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  }
+  await InvestorProfile.findOneAndUpdate({ userId }, { onboardingStatus: 'DOCUMENT_UPLOADED' });
+  await VerificationRequest.findOneAndUpdate({ investorId: userId }, { investorId: userId, status: 'PENDING' }, { upsert: true, new: true });
+  await createAuditLog({ actorId: new Types.ObjectId(userId), actorRole: 'INVESTOR', action: 'DOCUMENT_UPLOADED', entityType: 'DOCUMENT', entityId: document._id });
+  return document;
 };
 
-export const uploadDocumentService = async (req: Request) => {
-  const { user_id, document_type, kyc_application_id } = req.body;
-  const file = req.file;
-  if (!user_id || !document_type || !file) {
-    throw new Error("Missing required fields");
-  }
-  const fileBuffer = fs.readFileSync(file.path);
-  const fileName = file.originalname;
-  const storagePath = `docs/${Date.now()}_${fileName}`;
-  await client.query("BEGIN");
-  try {
-    const { error: uploadError } = await supabaseStorage.storage
-      .from("docs")
-      .upload(storagePath, fileBuffer, {
-        contentType: file.mimetype,
-        upsert: false,
-      });
-    if (uploadError) {
-      throw new Error(uploadError.message);
-    }
-    const { data: publicUrlData } = supabaseStorage.storage
-      .from("docs")
-      .getPublicUrl(storagePath);
-    const fileUrl = publicUrlData.publicUrl;
-    await client.query(
-      `SELECT insert_user_document(
-        $1, $2, $3, $4, $5, $6, $7
-      )`,
-      [
-        user_id,
-        document_type,
-        fileUrl,
-        kyc_application_id,
-        fileName,
-        file.size,
-        true,
-      ],
-    );
-    await client.query("COMMIT");
-    return {
-      file_url: fileUrl,
-      file_name: fileName,
-    };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    if (file?.path && fs.existsSync(file.path)) {
-      fs.unlinkSync(file.path);
-    }
-  }
-};
-export const validatePan = async (data: SubmitKycRequest): Promise<boolean> => {
-  try {
-    const { pan_number } = data;
-    if (!pan_number) {
-      return false;
-    }
-    if (!isValidPan(pan_number)) {
-      return false;
-    }
-    return true;
-  } catch (error) {
-    console.error("Error validating PAN:", error);
-    return false;
-  }
-};
-
-export const getKycByUserService = async (userId: number) => {
-  const result = await client.query(
-    "SELECT * FROM kyc_applications WHERE user_id = $1",
-    [userId],
-  );
-
-  return result.rows[0];
+export const getStatus = async (userId: string) => {
+  const profile = await InvestorProfile.findOne({ userId });
+  if (!profile) throw new ApiError(404, 'Investor profile not found', 'NOT_FOUND');
+  const verification = await VerificationRequest.findOne({ investorId: userId }).sort({ createdAt: -1 });
+  return { status: profile.onboardingStatus, remarks: verification?.remarks || '' };
 };

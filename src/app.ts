@@ -1,19 +1,21 @@
-import express from "express";
-import routes from "./routes/index";
-import cors from "cors";
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import routes from './routes';
+import { env } from './config/env';
+import { errorMiddleware } from './common/middleware/error.middleware';
 
 const app = express();
-
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true,
-  }),
-);
-
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+}));
+app.use(cors({ origin: env.corsOrigin === '*' ? true : env.corsOrigin, credentials: true }));
 app.use(express.json());
-
-app.use("/api", routes);
-
+app.use(express.urlencoded({ extended: true }));
+app.use(morgan('dev'));
+app.use('/uploads', express.static('uploads'));
+app.get('/health', (req, res) => res.json({ success: true, message: 'Server is running' }));
+app.use('/api', routes);
+app.use(errorMiddleware);
 export default app;

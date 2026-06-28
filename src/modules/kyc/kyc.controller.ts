@@ -1,84 +1,17 @@
-import { Request, Response } from "express";
-import { getKycByUserService, submitKycService } from "./kyc.service";
-import { uploadDocumentService } from "./kyc.service";
+import { Response } from 'express';
+import { AuthRequest } from '../../common/middleware/auth.middleware';
+import { successResponse } from '../../common/utils/apiResponse';
+import { panSchema } from '../../common/validations/pan.validation';
+import { documentUploadSchema } from '../../common/validations/kyc.validation';
+import * as service from './kyc.service';
 
-export const validatePAN = async (req: Request, res: Response) => {
-  try {
-  } catch (error) {
-    console.error(error);
-  }
+export const submitPan = async (req: AuthRequest, res: Response) => {
+  await service.submitPan(req.user!.id, panSchema.parse(req.body));
+  return successResponse(res, 'PAN details submitted successfully');
 };
-export const submitKyc = async (req: Request, res: Response) => {
-  try {
-    const kyc = await submitKycService(req.body);
-
-    res.status(201).json({
-      message: "KYC submitted successfully",
-      kyc,
-    });
-  } catch (error) {
-    console.error(error);
-
-    if (error instanceof Error) {
-      res.status(400).json({
-        error: error.message,
-      });
-      return;
-    }
-
-    res.status(500).json({
-      error: "Failed to submit KYC",
-    });
-  }
+export const uploadDocument = async (req: AuthRequest, res: Response) => {
+  const payload = documentUploadSchema.parse(req.body);
+  const document = await service.uploadDocument(req.user!.id, payload.documentType, req.file);
+  return successResponse(res, 'Document uploaded successfully', { fileUrl: document.fileUrl, documentId: document._id }, 201);
 };
-
-export const uploadDocument = async (req: Request, res: Response) => {
-  try {
-    const result = await uploadDocumentService(req);
-    res.status(201).json({
-      message: "Document uploaded successfully",
-      data: result,
-    });
-  } catch (error) {
-    console.error(error);
-    if (error instanceof Error) {
-      res.status(400).json({
-        error: error.message,
-      });
-      return;
-    }
-    res.status(500).json({
-      error: "Failed to upload document",
-    });
-  }
-};
-export const getKycByUser = async (req: Request, res: Response) => {
-  try {
-    const userId = Number(req.params.userId);
-
-    if (!userId) {
-      res.status(400).json({
-        error: "Valid user ID is required",
-      });
-      return;
-    }
-
-    const kyc = await getKycByUserService(userId);
-
-    if (!kyc) {
-      res.status(404).json({
-        error: "KYC details not found",
-      });
-      return;
-    }
-
-    res.status(200).json({
-      kyc,
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      error: "Failed to fetch KYC details",
-    });
-  }
-};
+export const getStatus = async (req: AuthRequest, res: Response) => successResponse(res, 'Status retrieved successfully', await service.getStatus(req.user!.id));

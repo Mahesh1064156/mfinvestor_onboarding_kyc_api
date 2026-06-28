@@ -1,17 +1,12 @@
+import express from 'express';
+import { authMiddleware } from '../../common/middleware/auth.middleware';
+import { roleMiddleware } from '../../common/middleware/role.middleware';
+import { upload } from '../../common/middleware/upload.middleware';
+import { asyncHandler } from '../../common/utils/asyncHandler';
+import * as controller from './kyc.controller';
 
-import express from "express";
-import { uploadDocument } from "./kyc.controller";
-import upload from "../../common/middleware/upload.middleware"
-
-import { getKycByUser, submitKyc } from "./kyc.controller";
-const kycRouter = express.Router();
-kycRouter.post("/submit", submitKyc);
-kycRouter.get("/:userId", getKycByUser);
-kycRouter.post(
-  "/upload-document",
-  upload.single("file"),
-  uploadDocument
-);
-export default kycRouter;
-
-
+const router = express.Router();
+router.post('/pan', authMiddleware, roleMiddleware('INVESTOR'), asyncHandler(controller.submitPan));
+router.post('/documents', authMiddleware, roleMiddleware('INVESTOR'), upload.single('file'), asyncHandler(controller.uploadDocument));
+router.get('/status', authMiddleware, roleMiddleware('INVESTOR'), asyncHandler(controller.getStatus));
+export default router;

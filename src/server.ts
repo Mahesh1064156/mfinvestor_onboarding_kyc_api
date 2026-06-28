@@ -1,14 +1,13 @@
-import app from "./app";
-import dotenv from "dotenv";
+import app from './app';
+import { connectDB } from './config/db';
+import { env } from './config/env';
 
-dotenv.config();
+const startServer = async () => {
+  await connectDB();
+  app.listen(env.port, () => console.log(`Server running on port ${env.port}`));
+};
 
-const PORT = process.env.PORT;
-
-app.get("/", (req, res) => {
-  res.send("Hi I am mfinvestor_onboarding_kyc_api");
-});
-
-app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+startServer().catch((error) => {
+  console.error('Failed to start server', error);
+  process.exit(1);
 });
