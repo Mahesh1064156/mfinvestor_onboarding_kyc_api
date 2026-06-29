@@ -62,6 +62,45 @@ router.post('/admin/register', async (req, res) => {
   }
 });
 
+// 1.5. POST /api/admin/login (Compatibility for Mobile app login)
+router.post('/admin/login', async (req, res) => {
+  try {
+    const { emailOrMobile, password } = req.body;
+
+    if (!emailOrMobile || !password) {
+      return res.status(400).json({ error: 'Email/Mobile and Password are required' });
+    }
+
+    const user = await User.findOne({
+      $or: [
+        { email: emailOrMobile.toLowerCase() },
+        { phone: emailOrMobile }
+      ]
+    });
+
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({ error: 'Invalid email/mobile or password' });
+    }
+
+    try {
+      await createAuditLog({
+        actorId: user._id,
+        actorRole: user.role,
+        action: 'USER_LOGIN',
+        entityType: 'USER',
+        entityId: user._id
+      });
+    } catch (auditErr) {
+      console.error('Audit log failed during login:', auditErr);
+    }
+
+    return res.status(200).json({ user_id: user._id, message: 'Logged in successfully' });
+  } catch (error: any) {
+    console.error('Mobile login error:', error);
+    return res.status(500).json({ error: error.message || 'Failed to login' });
+  }
+});
+
 // 2. POST /api/kyc/submit
 router.post('/kyc/submit', async (req, res) => {
   try {
