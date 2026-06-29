@@ -11,6 +11,7 @@ import { getDashboardSummary, getAuditLogs, createAuditLog } from '../modules/ad
 import { getApplications, getApplicationDetails } from '../modules/verification/verification.service';
 import { upload } from '../common/middleware/upload.middleware';
 import { uploadToSupabase } from '../integrations/storage.service';
+import { Notification } from '../modules/notification/notification.model';
 
 const router = express.Router();
 
@@ -42,6 +43,13 @@ router.post('/admin/register', async (req, res) => {
     });
 
     await InvestorProfile.create({ userId: user._id, fullName: user.name });
+
+    await Notification.create({
+      userId: user._id,
+      title: 'Registration Successful',
+      message: 'Your investor account has been created successfully.',
+      type: 'SYSTEM',
+    });
     
     try {
       await createAuditLog({
@@ -125,6 +133,13 @@ router.post('/kyc/submit', async (req, res) => {
     if (!profile) {
       return res.status(404).json({ error: 'Investor profile not found' });
     }
+
+    await Notification.create({
+      userId: user_id,
+      title: 'PAN Verification Completed',
+      message: 'Your PAN information has been verified successfully.',
+      type: 'PAN_STATUS',
+    });
 
     try {
       await createAuditLog({
@@ -219,6 +234,23 @@ router.post('/kyc/upload-mock', async (req, res) => {
       { status: 'PENDING' },
       { upsert: true }
     );
+
+    // Create dynamic database notifications
+    await Notification.create({
+      userId: user_id,
+      title: 'KYC Documents Uploaded',
+      message: 'Your KYC documents have been received successfully.',
+      type: 'KYC_STATUS',
+      isRead: true
+    });
+
+    await Notification.create({
+      userId: user_id,
+      title: 'Verification In Progress',
+      message: 'Our verification officer is reviewing your submitted documents.',
+      type: 'KYC_STATUS',
+      isRead: false
+    });
 
     try {
       await createAuditLog({
@@ -348,6 +380,20 @@ router.post('/verify/:id', async (req, res) => {
     const docStatus = dbStatus === 'APPROVED' ? 'VERIFIED' : dbStatus === 'REJECTED' || dbStatus === 'REUPLOAD_REQUIRED' ? 'REJECTED' : 'PENDING';
     await KycDocument.updateMany({ userId: req.params.id }, { verificationStatus: docStatus });
 
+    // Create status change notification in database
+    const notificationTitle = dbStatus === 'APPROVED' ? 'Application Approved' : dbStatus === 'REJECTED' ? 'Application Rejected' : 'Verification In Progress';
+    const notificationMessage = dbStatus === 'APPROVED' 
+      ? 'Congratulations! Your onboarding has been completed successfully. You may now proceed with future mutual fund onboarding activities when available.'
+      : remarks || 'Verification is currently in progress.';
+    
+    await Notification.create({
+      userId: req.params.id,
+      title: notificationTitle,
+      message: notificationMessage,
+      type: 'KYC_STATUS',
+      isRead: false
+    });
+
     try {
       await createAuditLog({
         actorId: req.params.id,
@@ -457,6 +503,23 @@ router.post('/kyc/upload', upload.single('file'), async (req: any, res: any) => 
         { upsert: true }
       );
 
+      // Create database notifications
+      await Notification.create({
+        userId: user_id,
+        title: 'KYC Documents Uploaded',
+        message: 'Your KYC documents have been received successfully.',
+        type: 'KYC_STATUS',
+        isRead: true
+      });
+
+      await Notification.create({
+        userId: user_id,
+        title: 'Verification In Progress',
+        message: 'Our verification officer is reviewing your submitted documents.',
+        type: 'KYC_STATUS',
+        isRead: false
+      });
+
       try {
         await createAuditLog({
           actorId: user_id,
@@ -474,6 +537,57 @@ router.post('/kyc/upload', upload.single('file'), async (req: any, res: any) => 
   } catch (error: any) {
     console.error('File upload error:', error);
     return res.status(500).json({ error: error.message || 'Failed to upload file' });
+  }
+});
+
+// 11. GET /api/notifications/:userId (Mobile compatibility to fetch investor notifications)
+router.get('/notifications/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const notifications = await Notification.find({ userId }).sort({ createdAt: -1 });
+    
+    const formatted = notifications.map(n => {
+      let iconType = 'ALERT';
+      const title = n.title.toLowerCase();
+      if (title.includes('approved')) iconType = 'SUCCESS_BADGE';
+      else if (title.includes('progress') || title.includes('review')) iconType = 'CLOCK';
+      else if (title.includes('uploaded')) iconType = 'DOCUMENT';
+      else if (title.includes('pan')) iconType = 'SHIELD_CHECK';
+      else if (title.includes('successful')) iconType = 'CHECK_CIRCLE';
+      
+      return {
+        id: n._id.toString(),
+        title: n.title,
+        description: n.message,
+        time: new Date((n as any).createdAt).toLocaleString('en-US', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }),
+        isRead: n.isRead,
+        icon: iconType
+      };
+    });
+    
+    return res.status(200).json(formatted);
+  } catch (error: any) {
+    console.error('Mobile notifications list error:', error);
+    return res.status(500).json({ error: error.message || 'Failed to fetch notifications' });
+  }
+});
+
+// 12. POST /api/notifications/:id/read (Mobile compatibility to mark notification as read)
+router.post('/notifications/:id/read', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await Notification.findOneAndUpdate({ _id: id }, { isRead: true });
+    return res.status(200).json({ success: true });
+  } catch (error: any) {
+    console.error('Mobile mark read error:', error);
+    return res.status(500).json({ error: error.message || 'Failed to mark notification as read' });
   }
 });
 
