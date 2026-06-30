@@ -36,6 +36,27 @@ export const connectDB = async (): Promise<void> => {
 
   await mongoose.connect(uri);
   console.log('MongoDB connected successfully');
+
+  // Seed default admin user for testing if it doesn't exist
+  try {
+    const { User } = require('../modules/auth/auth.model');
+    const bcrypt = require('bcryptjs');
+    const adminExists = await User.findOne({ role: 'ADMIN' });
+    if (!adminExists) {
+      const hashedPassword = await bcrypt.hash('Password@123', 10);
+      await User.create({
+        name: 'System Admin',
+        email: 'admin@example.com',
+        phone: '9999999999',
+        password: hashedPassword,
+        role: 'ADMIN',
+        isActive: true
+      });
+      console.log('Seeded default admin user: admin@example.com / Password@123');
+    }
+  } catch (error) {
+    console.error('Failed to seed admin user:', error);
+  }
 };
 
 // Clean shutdown handler to stop the embedded DB when the node process exits
