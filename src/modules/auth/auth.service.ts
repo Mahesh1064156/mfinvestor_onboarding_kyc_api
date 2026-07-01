@@ -83,3 +83,4 @@ export const resetPassword = async (payload: {
   await user.save();
   return { message: "Password reset successful" };
 };
+
